@@ -204,7 +204,7 @@ async function sendTifile(bytes) {
 $("install").addEventListener("click", async () => {
   try {
     status("Fetching HTMLREAD.8xp from site...");
-    const resp = await fetch("./HTMLREAD.8xp?v=24", { cache: "reload" });
+    const resp = await fetch("./HTMLREAD.8xp?v=25", { cache: "reload" });
     if (!resp.ok)
       throw new Error("reader file missing on server (" + resp.status + ")");
     const bytes = new Uint8Array(await resp.arrayBuffer());
