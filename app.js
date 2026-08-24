@@ -7,10 +7,17 @@
  *   raw bytes
  *   u16 checksum of everything after the datalen field
  *
- * ticalc.link integration: drop your ticalc.link source next to this file
- * as ./ticalclink.js and expose window.TICalcLink.sendFile(name, uint8array).
- * The Send button below picks it up automatically, no other changes needed.
+ * USB sending powered by ticalc.link's engine (ticalc-usb), vendored in
+ * ./ticalclink.js exposing window.TICalcUsbLib = { ticalc, tifiles }.
  */
+
+function concat(...arrs) {
+  const total = arrs.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const a of arrs) { out.set(a, o); o += a.length; }
+  return out;
+}
 
 function u16(v) {
   return new Uint8Array([v & 255, (v >> 8) & 255]);
@@ -47,42 +54,98 @@ function build8xv(name, bytes) {
   return concat(...out);
 }
 
-function concat(...arrs) {
-  const total = arrs.reduce((s, a) => s + a.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const a of arrs) { out.set(a, o); o += a.length; }
+/* Sanitize HTML the same way the on-calc parser expects:
+ * strip control chars except \n, map non-ASCII to '?' */
+function sanitizeHtml(text) {
+  let out = "";
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if (c === 10) out += "\n";
+    else if (c < 32) { /* drop tabs/CR/controls */ }
+    else if (c > 126) out += "?";
+    else out += ch;
+  }
   return out;
 }
 
-const $ = (id) => document.getElementById(id);
+const MAX_HTML_BYTES = 200000; // keep pages comfortable for the calc's RAM
 
 if (typeof document !== "undefined") {
 
-$("file").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  $("src").value = await f.text();
-});
+const $ = (id) => document.getElementById(id);
 
 let lastBlob = null;
 
+$("file").addEventListener("change", async (e) => {
+  await handleFiles(e.target.files);
+});
+
+/* drag & drop */
+["dragover", "dragenter"].forEach((ev) =>
+  document.body.addEventListener(ev, (e) => e.preventDefault())
+);
+document.body.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files.length)
+    await handleFiles(e.dataTransfer.files);
+});
+
+async function handleFiles(fileList) {
+  const files = [...fileList].filter((f) =>
+    /\.(html?|txt)$/i.test(f.name) || f.type === "text/html"
+  );
+  if (!files.length)
+    return status("Drop .html / .htm / .txt files.");
+  let slot = parseInt($("slot").value.slice(3), 10);
+  const made = [];
+  for (const f of files) {
+    if (slot > 9) { status("Slots HTM0-HTM9 full - skipped " + f.name); break; }
+    const text = sanitizeHtml(await f.text());
+    if (!text.trim()) continue;
+    const bytes = new TextEncoder().encode(text);
+    if (bytes.length > MAX_HTML_BYTES) {
+      status(`Skipped ${f.name}: ${bytes.length} B is too big.`);
+      continue;
+    }
+    const name = "HTM" + slot++;
+    const data = build8xv(name, bytes);
+    triggerDownload(data, name + ".8xv");
+    made.push(name);
+    await sleep(250); // browsers block multi-download bursts
+  }
+  if (made.length)
+    status("Generated: " + made.join(", ") +
+           ". Send them with the button below or TI Connect CE.");
+}
+
+function triggerDownload(bytes, filename) {
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+$("src").addEventListener("input", () => { /* kept for manual paste */ });
+
 $("go").addEventListener("click", () => {
   const name = $("slot").value;
-  const text = $("src").value;
+  const text = sanitizeHtml($("src").value);
   if (!text.trim()) {
-    status("Paste or load some HTML first.");
+    status("Paste, drop, or load some HTML first.");
     return;
   }
-  const bytes = new TextEncoder().encode(text); // calc folds >127 to '?'
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length > MAX_HTML_BYTES) {
+    status(`Too big: ${bytes.length} B. Keep pages under ${MAX_HTML_BYTES} B.`);
+    return;
+  }
   const data = build8xv(name, bytes);
   lastBlob = { name, data };
-  const blob = new Blob([data], { type: "application/octet-stream" });
-  const dl = $("dl");
-  dl.href = URL.createObjectURL(blob);
-  dl.download = name + ".8xv";
-  dl.style.display = "inline";
-  status(`OK: ${name}.8xv, ${data.length} bytes (${bytes.length} html).`);
+  triggerDownload(data, name + ".8xv");
+  status(`OK: ${name}.8xv, ${data.length} bytes (${bytes.length} html). ` +
+         "Use Send over USB, or download then TI Connect CE.");
 });
 
 /* ---- real USB sending via ticalc.link's engine (ticalc-usb) ---- */
@@ -111,7 +174,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 $("send").addEventListener("click", async () => {
   if (!lastBlob)
-    return status("Generate the .8xv first.");
+    return status("Generate an .8xv first (button above).");
   if (!window.TICalcUsbLib || !navigator.usb)
     return status("WebUSB not available - use Chrome/Edge on desktop, or download the .8xv.");
 
@@ -149,4 +212,3 @@ function status(msg) {
 }
 
 } // end browser-only UI block
-
