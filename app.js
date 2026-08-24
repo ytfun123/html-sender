@@ -172,35 +172,56 @@ if (window.TICalcUsbLib && navigator.usb) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function ensureCalc() {
+  if (usbCalc)
+    return usbCalc;
+  if (!window.TICalcUsbLib || !navigator.usb)
+    throw new Error("WebUSB not available - use Chrome/Edge on desktop.");
+  const { ticalc } = window.TICalcUsbLib;
+  status("Choose your calculator in the browser prompt...");
+  await ticalc.choose(); // fires 'connect' above
+  for (let i = 0; i < 50 && !usbCalc; i++)
+    await sleep(100);
+  if (!usbCalc)
+    throw new Error("No calculator connected.");
+  return usbCalc;
+}
+
+async function sendTifile(bytes) {
+  const { tifiles } = window.TICalcUsbLib;
+  const calc = await ensureCalc();
+  const file = tifiles.parseFile(bytes);
+  if (!tifiles.isValid(file))
+    throw new Error("file failed validation");
+  if (!calc.canReceive(file))
+    throw new Error(calc.name + " cannot receive this file type.");
+  const details = await calc.getStorageDetails(file);
+  if (details && details.fits === false)
+    throw new Error("Not enough free memory on the calculator.");
+  await calc.sendFile(file);
+}
+
+$("install").addEventListener("click", async () => {
+  try {
+    status("Fetching HTMLREAD.8xp from site...");
+    const resp = await fetch("./HTMLREAD.8xp");
+    if (!resp.ok)
+      throw new Error("reader file missing on server (" + resp.status + ")");
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    status("Sending reader (" + bytes.length + " B)... plug in calc, leave it on the home screen.");
+    await sendTifile(bytes);
+    status("Reader installed! Launch HTMLREAD from Cesium or [prgm].");
+  } catch (err) {
+    status("Install failed: " + (err.message || err));
+  }
+});
+
 $("send").addEventListener("click", async () => {
   if (!lastBlob)
     return status("Generate an .8xv first (button above).");
-  if (!window.TICalcUsbLib || !navigator.usb)
-    return status("WebUSB not available - use Chrome/Edge on desktop, or download the .8xv.");
-
-  const { ticalc, tifiles } = window.TICalcUsbLib;
   try {
-    if (!usbCalc) {
-      status("Choose your calculator in the browser prompt...");
-      await ticalc.choose(); // fires 'connect' above
-      for (let i = 0; i < 50 && !usbCalc; i++)
-        await sleep(100);
-    }
-    if (!usbCalc)
-      return status("No calculator connected.");
-
-    const file = tifiles.parseFile(lastBlob.data);
-    if (!tifiles.isValid(file))
-      return status("Generated file failed validation?!");
-    if (!usbCalc.canReceive(file))
-      return status(usbCalc.name + " cannot receive this file type.");
-
-    const details = await usbCalc.getStorageDetails(file);
-    if (details && details.fits === false)
-      return status("Not enough free memory on the calculator.");
-
     status("Sending " + lastBlob.name + "...");
-    await usbCalc.sendFile(file);
+    await sendTifile(lastBlob.data);
     status("Sent! Open HTMLREAD on the calc and pick " + lastBlob.name + ".");
   } catch (err) {
     status("USB send failed: " + (err.message || err));
