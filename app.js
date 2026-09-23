@@ -216,6 +216,21 @@ $("install").addEventListener("click", async () => {
   }
 });
 
+$("installRadical").addEventListener("click", async () => {
+  try {
+    status("Fetching RADICAL.8xp from site...");
+    const resp = await fetch("./RADICAL.8xp?v=27", { cache: "reload" });
+    if (!resp.ok)
+      throw new Error("radical file missing on server (" + resp.status + ")");
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    status("Sending radical simplifier (" + bytes.length + " B)...");
+    await sendTifile(bytes);
+    status("Radical installed! Launch RADICAL from Cesium or [prgm].");
+  } catch (err) {
+    status("Install failed: " + (err.message || err));
+  }
+});
+
 $("send").addEventListener("click", async () => {
   if (!lastBlob)
     return status("Generate an .8xv first (button above).");
