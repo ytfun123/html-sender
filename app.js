@@ -219,7 +219,7 @@ $("install").addEventListener("click", async () => {
 $("installRadical").addEventListener("click", async () => {
   try {
     status("Fetching RADICAL.8xp from site...");
-    const resp = await fetch("./RADICAL.8xp?v=31", { cache: "reload" });
+    const resp = await fetch("./RADICAL.8xp?v=32", { cache: "reload" });
     if (!resp.ok)
       throw new Error("radical file missing on server (" + resp.status + ")");
     const bytes = new Uint8Array(await resp.arrayBuffer());
